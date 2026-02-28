@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>NTPC Graduate Level – Version 2 Pro CBT</title>
+<style>
+  body{margin:0;font-family:Arial;background:#f1f5f9}
+  header{background:#0f172a;color:#fff;padding:10px;text-align:center}
+  .container{padding:15px}
+  button{padding:8px 12px;margin:4px;border:none;border-radius:4px;cursor:pointer}
+  .primary{background:#2563eb;color:#fff}
+  .danger{background:#dc2626;color:#fff}
+  .secondary{background:#475569;color:#fff}
+  .option{background:#e2e8f0;padding:8px;margin:6px 0;border-radius:4px;cursor:pointer}
+  .option.selected{background:#93c5fd}
+  .palette{display:grid;grid-template-columns:repeat(10,1fr);gap:5px;margin-top:10px}
+  .palette div{padding:6px;text-align:center;border-radius:4px;background:#cbd5e1;cursor:pointer}
+  .palette .answered{background:#16a34a;color:#fff}
+  .palette .review{background:#f59e0b;color:#fff}
+  .timer{font-weight:bold;color:#ef4444}
+  .hidden{display:none}
+  .report{background:#fff;padding:15px;border-radius:6px;margin-top:10px}
+  canvas{border:1px solid #ccc;margin-top:10px}
+  #questionBox{background:#fff;padding:12px;border-radius:6px}
+  @media(max-width:600px){.palette{grid-template-columns:repeat(5,1fr)}}
+</style>
+</head>
+
+<body>
+<header>
+  <h2>NTPC Graduate Level – Version 2 Pro CBT</h2>
+  <div id="timer">Time: 90:00</div>
+</header>
+
+<div class="container">
+
+  <div id="login">
+    <input type="text" id="username" placeholder="Enter Name" />
+    <select id="language">
+      <option value="en">English</option>
+      <option value="hi">Hindi</option>
+      <option value="bn">Bengali</option>
+    </select>
+    <select id="mockSelect"></select>
+    <button class="primary" onclick="startExam()">Start Mock</button>
+  </div>
+
+  <div id="exam" class="hidden">
+    <div id="questionBox"></div>
+    <div id="optionsBox"></div>
+
+    <button class="secondary" onclick="prevQuestion()">Prev</button>
+    <button class="secondary" onclick="nextQuestion()">Next</button>
+    <button class="secondary" onclick="markReview()">Mark Review</button>
+    <button class="danger" onclick="submitExam()">Submit</button>
+
+    <div class="palette" id="palette"></div>
+  </div>
+
+  <div id="result" class="hidden report"></div>
+
+</div>
+
+<script>
+/* ================================
+   CORE SYSTEM (Both snippets merged into one valid file)
+================================ */
+
+let user = {}, current = 0, time = 5400, timerInt;
+let selectedMock = [];
+let answers = {}, review = {};
+
+// Persistent "Red Alert" tracker for weak topics across attempts
+let redAlert = JSON.parse(localStorage.getItem("ntpc_red_alert") || "{}");
+
+function populateMocks(){
+  let sel = document.getElementById("mockSelect");
+  sel.innerHTML = "";
+  for(let i=1;i<=20;i++){
+    let opt = document.createElement("option");
+    opt.value = i;
+    opt.innerText = "Mock Test " + i;
+    sel.appendChild(opt);
+  }
+}
+populateMocks();
+
+function startExam(){
+  let name = document.getElementById("username").value.trim();
+  if(!name) return alert("Enter Name");
+
+  user.name = name;
+  user.lang = document.getElementById("language").value;
+
+  let mock = parseInt(document.getElementById("mockSelect").value, 10);
+  selectedMock = generateMock(mock);
+
+  answers = {};
+  review = {};
+  current = 0;
+  time = 5400;
+
+  document.getElementById("login").classList.add("hidden");
+  document.getElementById("exam").classList.remove("hidden");
+  document.getElementById("result").classList.add("hidden");
+  document.getElementById("result").innerHTML = "";
+
+  buildPalette();
+  showQuestion();
+
+  clearInterval(timerInt);
+  timerInt = setInterval(updateTimer, 1000);
+}
+
+function updateTimer(){
+  time--;
+  let m = Math.floor(time/60);
+  let s = time % 60;
+  document.getElementById("timer").innerText = "Time: " + m + ":" + String(s).padStart(2,'0');
+  if(time <= 0) submitExam();
+}
+
+function showQuestion(){
+  let q = selectedMock[current];
+  document.getElementById("questionBox").innerText = (current+1) + ". " + translate(q.question);
+
+  let optBox = document.getElementById("optionsBox");
+  optBox.innerHTML = "";
+
+  q.options.forEach((opt, i) => {
+    let div = document.createElement("div");
+    div.className = "option";
+    div.innerText = translate(opt);
+
+    if(answers[current] === i) div.classList.add("selected");
+
+    div.onclick = () => {
+      answers[current] = i;
+      updatePalette();
+      showQuestion();
+    };
+
+    optBox.appendChild(div);
+  });
+}
+
+function nextQuestion(){ if(current < 99){ current++; showQuestion(); } }
+function prevQuestion(){ if(current > 0){ current--; showQuestion(); } }
+
+function markReview(){
+  review[current] = true;
+  updatePalette();
+}
+
+function buildPalette(){
+  let pal = document.getElementById("palette");
+  pal.innerHTML = "";
+  for(let i=0;i<100;i++){
+    let d = document.createElement("div");
+    d.innerText = i + 1;
+    d.onclick = () => { current = i; showQuestion(); };
+    pal.appendChild(d);
+  }
+  updatePalette();
+}
+
+function updatePalette(){
+  let pal = document.getElementById("palette").children;
+  for(let i=0;i<100;i++){
+    pal[i].classList.remove("answered", "review");
+    if(answers[i] !== undefined) pal[i].classList.add("answered");
+    if(review[i]) pal[i].classList.add("review");
+  }
+}
+
+function submitExam(){
+  clearInterval(timerInt);
+
+  document.getElementById("exam").classList.add("hidden");
+  document.getElementById("result").classList.remove("hidden");
+
+  calculateResult();
+}
+
+function calculateResult(){
+  let correct = 0, wrong = 0, attempt = 0, topicStats = {};
+
+  selectedMock.forEach((q, i) => {
+    if(answers[i] !== undefined){
+      attempt++;
+      if(answers[i] === q.answer){
+        correct++;
+      } else {
+        wrong++;
+        topicStats[q.topic] = (topicStats[q.topic] || 0) + 1;
+        redAlert[q.topic] = (redAlert[q.topic] || 0) + 1;
+      }
+    }
+  });
+
+  localStorage.setItem("ntpc_red_alert", JSON.stringify(redAlert));
+
+  let score = correct - (wrong/3);
+  let weak = Object.keys(topicStats);
+
+  document.getElementById("result").innerHTML = `
+    <h3>${user.name} – Result</h3>
+    Attempted: ${attempt}<br>
+    Correct: ${correct}<br>
+    Wrong: ${wrong}<br>
+    Raw Marks: ${score.toFixed(2)}<br><br>
+    <h4>Weak Areas:</h4>
+    ${weak.length ? weak.map(t => `<div style="color:red">${t}${redAlert[t]>=3 ? " (Red Alert)" : ""}</div>`).join("") : "<div style='color:green'>No weak areas detected.</div>"}
+    <br>
+    <button class="secondary" onclick="generateRoadmap()">Generate 3-Day Plan</button>
+    <button class="secondary" onclick="weakQuiz()">Weak Zone Quiz</button>
+    <button class="primary" onclick="restart()">Restart</button>
+  `;
+}
+
+function generateRoadmap(){
+  let plan = "<h4>3-Day Strategy</h4>";
+  let topics = Object.keys(redAlert);
+
+  if(!topics.length){
+    plan += "<div>Take another mock to generate a personalized plan.</div>";
+  } else {
+    topics.forEach(t => {
+      plan += `<b>${t}</b><br>
+      Day 1: Revise theory<br>
+      Day 2: Practice 30 MCQs<br>
+      Day 3: Timed test<br><br>`;
+    });
+  }
+  document.getElementById("result").innerHTML += plan;
+}
+
+function weakQuiz(){
+  alert("Weak Zone Booster (15 Timed Questions) Activated. (Demo placeholder)");
+}
+
+function restart(){
+  document.getElementById("result").classList.add("hidden");
+  document.getElementById("exam").classList.add("hidden");
+  document.getElementById("login").classList.remove("hidden");
+  clearInterval(timerInt);
+  document.getElementById("timer").innerText = "Time: 90:00";
+}
+
+/* ================================
+   TRANSLATION ENGINE (Placeholder)
+================================ */
+
+function translate(text){
+  if(user.lang === "en") return text;
+  if(user.lang === "hi") return text + " (हिंदी अनुवाद)";
+  if(user.lang === "bn") return text + " (বাংলা অনুবাদ)";
+  return text;
+}
+
+/* ================================
+   QUESTION GENERATOR ENGINE
+================================ */
+
+function generateMock(mockNumber){
+  let difficulty = mockNumber<=5 ? "easy" : mockNumber<=10 ? "moderate" : mockNumber<=15 ? "hard" : "rank";
+  let questions = [];
+  questions.push(...generateGA(40, difficulty));
+  questions.push(...generateMath(30, difficulty));
+  questions.push(...generateReasoning(30, difficulty));
+  return questions;
+}
+
+/* ================================
+   GENERAL AWARENESS BANK
+================================ */
+
+const GA_BANK = [
+  {question:"Who gave the slogan 'Do or Die'?",options:["Mahatma Gandhi","Nehru","Subhash Bose","Tilak"],answer:0,topic:"History"},
+  {question:"Article 324 relates to?",options:["Election Commission","Finance Commission","Supreme Court","CAG"],answer:0,topic:"Polity"},
+  {question:"SI unit of Pressure?",options:["Pascal","Newton","Joule","Watt"],answer:0,topic:"Science"},
+  {question:"Source of Narmada River?",options:["Amarkantak","Gangotri","Yamunotri","Satpura"],answer:0,topic:"Geography"},
+  {question:"Lakhpati Didi scheme aims at?",options:["Women entrepreneurship","Farmer subsidy","Railway safety","Sports training"],answer:0,topic:"Current Affairs"}
+];
+
+function generateGA(count, difficulty){
+  let arr = [];
+  for(let i=0;i<count;i++){
+    let base = GA_BANK[i % GA_BANK.length];
+    arr.push({...base});
+  }
+  return arr;
+}
+
+/* ================================
+   MATH GENERATOR
+================================ */
+
+function generateMath(count, difficulty){
+  let arr = [];
+  for(let i=0;i<count;i++){
+    let a = 10 + i, b = 5 + i;
+    arr.push({
+      question: `What is ${a}+${b}?`,
+      options: [String(a+b), String(a+b+1), String(a+b-1), String(a+b+2)],
+      answer: 0,
+      topic: "Arithmetic"
+    });
+  }
+  return arr;
+}
+
+/* ================================
+   REASONING GENERATOR
+================================ */
+
+function generateReasoning(count, difficulty){
+  let arr = [];
+  for(let i=0;i<count;i++){
+    arr.push({
+      question: "If CAT = DBU, DOG = ?",
+      options: ["EPH","EOH","FPI","EPJ"],
+      answer: 0,
+      topic: "Coding-Decoding"
+    });
+  }
+  return arr;
+}
+</script>
+</body>
+</html>
